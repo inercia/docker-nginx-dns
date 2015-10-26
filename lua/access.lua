@@ -1,6 +1,9 @@
 
 local shlb     = ngx.shared.lb
+local math     = require "math"
 local resolver = require "resty.dns.resolver"
+
+math.randomseed(os.time())
 
 function abort(reason, code)
     ngx.status = code
@@ -8,18 +11,24 @@ function abort(reason, code)
     return code
 end
                         
--- TODO: use this caching mechanism:
--- http://sosedoff.com/2012/06/11/dynamic-nginx-upstreams-with-lua-and-redis.html
 -- TODO: maybe we could connect to weaveDNS and wait for updates on the name...
 
-local insync = shlb:get("insync")
-if insync ~= true then
-    shlb:set("insync", true, ngx.var.ttl)
+-- hackish solution for storing the 'name':IP1,IP2...IPn
+-- in the shared memory area: we store
+--    'name#records' = n
+--    'name#1'       = IP1
+--    'name#2'       = IP2
+--    ...
 
+local name_records_key = ngx.var.name .. "#records"
+
+local num_records = shlb:get(name_records_key)
+if num_records == nil then
     local dns, err  = resolver:new{
         nameservers = { ngx.var.nameserver },
         retrans     = 2,
-        timeout     = 300
+        timeout     = 300,
+        no_recurse  = true
     }
 
     if not dns then
@@ -43,20 +52,38 @@ if insync ~= true then
         end
     end
 
+    -- save the records count
+    shlb:set(name_records_key, table.getn(records), ngx.var.ttl)
+
+    -- ... and then each record
+    local count = 0
     for i, ans in ipairs(records) do
-        ngx.log(ngx.DEBUG, "record:", ans.name, " ", ans.address or ans.cname,
+        count = count  + 1
+
+        local name     = ngx.var.name .. "#" .. count
+        local upstream = "http://" .. ans.address .. ":" .. ngx.var.int_port .. "/"
+        
+        ngx.log(ngx.DEBUG, name, " :", ans.name, " ", ans.address or ans.cname,
                 " type:", ans.type, " class:", ans.class,
                 " ttl:", ans.ttl)
+
+        shlb:set(name, upstream, ngx.var.ttl)        
     end
-                
-    -- use the first IP
-    local upstream = "http://" .. records[1].address .. ":" .. ngx.var.int_port .. "/"
-    shlb:set("upstream", upstream)
-    print("Setting upstream to " .. upstream)
 end
 
-ngx.var.upstream = shlb:get("upstream")
-if ngx.var.upstream ~= nil then
-    ngx.log(ngx.INFO, "Upstream is " .. ngx.var.upstream)
+-- get a random upstream from the cached upstreams list
+local num_upstreams  = shlb:get(name_records_key)
+if num_upstreams == nil then
+    return abort("Not found", 404)    
 end
+local upstream_idx  = math.random(1, num_upstreams)
+local name          = ngx.var.name .. "#" .. upstream_idx
+local upstream      = shlb:get(name)
+if upstream == nil then
+    ngx.log(ngx.ERR, "Upstream " .. name .. " (of " .. num_upstreams .. ") not found")
+    return abort("Internal routing error", 500)
+end
+
+ngx.log(ngx.DEBUG, "Upstream is " .. upstream)
+ngx.var.upstream = upstream
 
