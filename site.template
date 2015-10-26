@@ -1,5 +1,9 @@
 
-lua_package_path "@@LUA_LIBRARY@@/?.lua;;";
+lua_package_path   "@@LUA_LIBRARY@@/?.lua;;";
+lua_shared_dict    lb 10m;
+
+init_by_lua '
+';
 
 server {
     listen                  @@EXT_PORT@@;
@@ -9,65 +13,25 @@ server {
     root                    /root/html;
 
     location / {
-        set $upstream "";
-        
-        rewrite_by_lua '
+            set $_url                   "";
+            set $upstream               "";
+            set $name                   "@@NAME@@";
+            set $nameserver             "@@NAMESERVER@@";
+            set $int_port               @@INT_PORT@@;
+            set $ttl                    1;
 
-            local resolver = require "resty.dns.resolver"
+            lua_need_request_body       on;
+            access_by_lua_file          @@LUA_LIBRARY@@/access.lua;
 
-            function abort(reason, code)
-                ngx.status = code
-                ngx.say(reason)
-                return code
-            end
-
-            local name   = "@@NAME@@"
-            local dns, err  = resolver:new{
-                nameservers = { "@@NAMESERVER@@" },
-                retrans     = 2,
-                timeout     = 300
-            }
-            if not dns then
-                ngx.log(ngx.ERR, "failed to instantiate the resolver: " .. err)
-                return abort("DNS error", 500)
-            end
-            
-            ngx.log(ngx.ERR, "Querying about " .. name .. " to @@NAMESERVER@@")
-            local records, err = dns:query(name)
-            if not records then
-                ngx.log(ngx.ERR, msg, "failed to query the DNS server: " .. err)
-                return abort("Internal routing error", 500)
-            end
-
-            if records.errcode then
-                -- error code meanings available in http://bit.ly/1ppRk24
-                if records.errcode == 3 then
-                    return abort("Not found", 404)
-                else
-                    ngx.log(ngx.ERR, msg, "DNS error #" .. records.errcode .. ": " .. records.errstr)
-                    return abort("DNS error", 500)
-                end
-            end
-
-            -- resolve the target to an IP
-            local target_ip = dns:query(records[1].target)[1].address
-            ngx.var.target = target_ip .. ":" .. "@@INT_PORT@@"
-                                    
-            -- TODO: use this caching mechanism:
-            -- http://sosedoff.com/2012/06/11/dynamic-nginx-upstreams-with-lua-and-redis.html
-            
-            -- TODO: maybe we could connect to weaveDNS and wait for updates on the name...
-        ';
-
-        proxy_buffering             off;
-        proxy_set_header            Host $host;
-        proxy_set_header            X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_redirect              off;
-        proxy_connect_timeout       10;
-        proxy_send_timeout          30;
-        proxy_read_timeout          30;
-        proxy_pass                  http://$upstream;
-    }
+            proxy_buffering             off;
+            proxy_set_header            Host $host;
+            proxy_set_header            X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_redirect              off;
+            proxy_connect_timeout       10;
+            proxy_send_timeout          30;
+            proxy_read_timeout          30;
+            proxy_pass                  $upstream;
+    }    
 }
 
 

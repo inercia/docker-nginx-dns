@@ -3,7 +3,7 @@
 
 CURR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-NAME="weave-reverse-proxy"
+NAME="weave-nginx"
 NGINX=/usr/local/openresty/nginx/sbin/nginx
 
 # the service template and wehere it will be written to
