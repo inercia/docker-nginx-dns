@@ -7,8 +7,8 @@ NAME="weave-nginx"
 NGINX=/usr/local/openresty/nginx/sbin/nginx
 
 # the service template and wehere it will be written to
-NGINX_SITE_TEMPLATE=${NGINX_SITE_TEMPLATE:-$CURR_DIR/site.template}
-NGINX_SITES_DIR=${NGINX_SITES_DIR:-/usr/local/openresty/nginx/conf/sites-enabled}
+NGINX_SERVICE_TEMPLATE=${NGINX_SERVICE_TEMPLATE:-$CURR_DIR/site.template}
+NGINX_SERVICES_DIR=${NGINX_SERVICES_DIR:-/usr/local/openresty/nginx/conf/sites-enabled}
 
 # where our Lua scripts are
 LUA_LIBRARY=${LUA_LIBRARY:-$CURR_DIR/lua}
@@ -20,7 +20,9 @@ usage() {
     
 Usage:
 
-    $NAME EXT_PORT:NAME:INT_PORT    
+    $NAME <service> [<service> ...]
+
+where <service> = <EXT_PORT>:<NAME>:<INT_PORT>
 
 EOF
 }
@@ -35,31 +37,37 @@ curr_nameserver() { cat "/etc/resolv.conf" | grep "nameserver" | head -1 | cut -
 # main
 #########################################
 
-MAPPING=$1
-[ -n "$MAPPING" ] || usage_fatal "no mapping provided"
-
-EXT_PORT=$(echo $MAPPING | cut -d':' -f1)
-NAME=$(echo $MAPPING | cut -d':' -f2)
-INT_PORT=$(echo $MAPPING | cut -d':' -f3)
 NAMESERVER=$(curr_nameserver)
+log "Using nameserver: $NAMESERVER"
 
-[ -n "$EXT_PORT" ]   || usage_fatal "no external port provided"
-[ -n "$NAME"     ]   || usage_fatal "no name provided"
-[ -n "$INT_PORT" ]   || usage_fatal "no internal port provided"
-[ -n "$NAMESERVER" ] || usage_fatal "no nameserver could be obtained"
+[ -d $NGINX_SERVICES_DIR ] || mkdir -p $NGINX_SERVICES_DIR
 
-[ -d $NGINX_SITES_DIR ] || mkdir -p $NGINX_SITES_DIR
+while [ $# -gt 0 ]; do
+    MAPPING=$1
+    [ -n "$MAPPING" ] || usage_fatal "no mapping provided"
 
-log "Creating load balancer for '$NAME'"
-cat $NGINX_SITE_TEMPLATE | \
-    replace "NAME"        "$NAME"        | \
-    replace "EXT_PORT"    "$EXT_PORT"    | \
-    replace "INT_PORT"    "$INT_PORT"    | \
-    replace "NAMESERVER"  "$NAMESERVER"  | \
-    replace "LUA_LIBRARY" "$LUA_LIBRARY" > $NGINX_SITES_DIR/$NAME \
-       || fatal "could not write file"
+    EXT_PORT=$(echo $MAPPING | cut -d':' -f1)
+    NAME=$(echo $MAPPING | cut -d':' -f2)
+    INT_PORT=$(echo $MAPPING | cut -d':' -f3)
 
-log "Starting nginx:$EXT_PORT -> $NAME:$INT_PORT"
+    [ -n "$EXT_PORT" ]   || usage_fatal "no external port provided in mapping"
+    [ -n "$NAME"     ]   || usage_fatal "no name provided in mapping"
+    [ -n "$INT_PORT" ]   || usage_fatal "no internal port provided in mapping"
+    [ -n "$NAMESERVER" ] || usage_fatal "no nameserver could be obtained in mapping"
+
+    SERVICE_FILE=$NGINX_SERVICES_DIR/$NAME-$EXT_PORT-$INT_PORT
+
+    log "Adding service $EXT_PORT -> $NAME:$INT_PORT"
+    cat $NGINX_SERVICE_TEMPLATE | \
+        replace "NAME"        "$NAME"        | \
+        replace "EXT_PORT"    "$EXT_PORT"    | \
+        replace "INT_PORT"    "$INT_PORT"    | \
+        replace "NAMESERVER"  "$NAMESERVER"  | \
+        replace "LUA_LIBRARY" "$LUA_LIBRARY" > $SERVICE_FILE \
+            || fatal "could not write file"
+
+    shift
+done
+
+log "Starting nginx (nameserver: $NAMESERVER)"
 $NGINX -g 'daemon off;'
-
-
