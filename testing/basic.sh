@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
 # simple testing scenario with the help of docker-machine
-# - creates 2 VMs with
+# - creates 3 VMs with
 #    - docker, Weave and Discovery
+#    - 1 of them with weave-nginx
+#    - 2 of them with a test webserver
 # - creates a token
-# - both VMs join the same token
-# - and we show the Weave logs (if "--check")
+# - all the VMs join the same token
 
 [ -n "$WEAVE_DEBUG" ] && set -x
 
@@ -16,14 +17,19 @@ WEBSERVER_MACHINES="host1 host2"
 ALL_MACHINES="$NGINX_MACHINES $WEBSERVER_MACHINES"
 ALL_MACHINE_COUNT=$(echo $ALL_MACHINES | wc -w)
 
+DISCO_TOKEN_URL=https://discovery-stage.hub.docker.com/v1/clusters
 DISCO_SCRIPT_URL=https://raw.githubusercontent.com/weaveworks/discovery/master/discovery
 
-NGINX_IMAGE="weaveworks/weave-nginx"
+NGINX_IMAGE="inercia/weave-nginx"
 NGINX_IMAGE_FILES="../weave_nginx.tar"
 REMOTE_ROOT=/home/docker
 WEAVE=$REMOTE_ROOT/weave
 WEAVER_PORT=6783
 TOKEN=
+
+SERVICE=webserver
+EXT_PORT=80
+INT_PORT=8080
 
 log() { echo ">>> $1" >&2 ; }
 
@@ -54,14 +60,17 @@ while [ $# -gt 0 ] ; do
 done
 
 # Get a token
-[ -z "$TOKEN" ] && TOKEN=$(curl --silent -X POST https://discovery-stage.hub.docker.com/v1/clusters)
+[ -z "$TOKEN" ] && TOKEN=$(curl --silent -X POST $DISCO_TOKEN_URL)
 
 # Create two machines
 for machine in $ALL_MACHINES ; do
-    docker-machine status $machine >/dev/null 2>&1
+    STATUS=$(docker-machine status $machine 2>&1)
     if [ $? -ne 0 ] ; then
-        log "Creating VirtualBox $machine..."
+        log "Creating $machine (VirtualBox)..."
         docker-machine create --driver virtualbox $machine
+    elif [ "$STATUS" = "Stopped" ] ; then
+        log "Starting $machine..."
+        docker-machine start $machine
     fi
 done
 
@@ -80,48 +89,60 @@ for machine in $ALL_MACHINES ; do
     advertise=$(docker-machine ip $machine):$WEAVER_PORT
 
     SCRIPT=$(tempfile)
-    cat <<EOF > $SCRIPT
+    cat <<-EOF > $SCRIPT
 #!/bin/sh
 
-echo ">>> Installing and launching Weave"
-[ -x $WEAVE ] && $WEAVE stop  >/dev/null 2>&1 || /bin/true
-cd $REMOTE_ROOT                         && \
-    rm -f $WEAVE                        && \
-    sudo curl -L git.io/weave -o $WEAVE && \
-    sudo chmod a+x $WEAVE               && \
-    $WEAVE launch --init-peer-count $ALL_MACHINE_COUNT
+        for C in weave weaveproxy webserver nginx weavediscovery ; do
+            echo ">>> Stopping \$C"
+            docker stop \$C  >/dev/null 2>&1 || /bin/true
+            docker rm \$C    >/dev/null 2>&1 || /bin/true
+        done
 
-    sleep 2
-    
-echo ">>> Installing and launching Discovery (advertising $advertise)"
-[ -f $REMOTE_ROOT/discovery ] && docker stop weavediscovery  >/dev/null 2>&1 || /bin/true
-cd $REMOTE_ROOT                              && \
-    curl --silent -L -O $DISCO_SCRIPT_URL    && \
-    chmod a+x $REMOTE_ROOT/discovery         && \
-    $REMOTE_ROOT/discovery join --advertise=$advertise token://$TOKEN
+        echo ">>> Installing and launching Weave"
+        cd $REMOTE_ROOT                         && \
+            rm -f $WEAVE                        && \
+            sudo curl -L git.io/weave -o $WEAVE && \
+            sudo chmod a+x $WEAVE               && \
+            $WEAVE launch --init-peer-count $ALL_MACHINE_COUNT
 
-EOF
+        sleep 3
 
-    echo "$WEBSERVER_MACHINES" | grep -q $machine 
-    if [ $? -eq 0 ] ; then 
-        cat <<EOF >> $SCRIPT
-        docker inspect webserver >/dev/null 2>&1 && docker stop webserver && docker rm webserver
-        $WEAVE run -p 8080:8080 -ti --name webserver adejonge/helloworld
+        echo ">>> Installing and launching Discovery (advertising $advertise)"
+        cd $REMOTE_ROOT                              && \
+            curl --silent -L -O $DISCO_SCRIPT_URL    && \
+            chmod a+x $REMOTE_ROOT/discovery         && \
+            $REMOTE_ROOT/discovery join --advertise=$advertise token://$TOKEN
+
+        if [ "\$1" = "webserver" ] ; then
+            echo ">>> Launching webserver"
+            $WEAVE run -p $INT_PORT:$INT_PORT -ti \
+                --name $SERVICE adejonge/helloworld &
+        else
+            echo ">>> Loading weave/nginx"
+            docker load -i $REMOTE_ROOT/weave_nginx.tar
+
+            echo ">>> Launching weave/nginx"
+            $WEAVE run -p $EXT_PORT:$EXT_PORT \
+                --name nginx $NGINX_IMAGE $EXT_PORT:$SERVICE:$INT_PORT   &
+        fi
 EOF
-    else
-        cat <<EOF >> $SCRIPT
-        docker inspect nginx >/dev/null 2>&1 && docker stop nginx && docker rm nginx
-        docker load -i $REMOTE_ROOT/weave_nginx.tar
-        $WEAVE run -p 80:80 --name nginx $NGINX_IMAGE 80:webserver:8080
-EOF
-    fi
     
     log "Preparing provisioning for $machine..."
     docker-machine scp $SCRIPT $machine:$REMOTE_ROOT/provision.sh >/dev/null
     rm -f $SCRIPT
 done
 
-for machine in $ALL_MACHINES ; do
-    log "Provisioning $machine..."
-    docker-machine ssh $machine sh $REMOTE_ROOT/provision.sh &
+for machine in $NGINX_MACHINES ; do
+    log "Provisioning $machine (gateway)..."
+    docker-machine ssh $machine sh $REMOTE_ROOT/provision.sh nginx     &
 done
+for machine in $WEBSERVER_MACHINES ; do
+    log "Provisioning $machine (webserver)..."
+    docker-machine ssh $machine sh $REMOTE_ROOT/provision.sh webserver &
+done
+
+GATEWAY_IP=$(docker-machine ip gateway)
+echo "Wait a few seconds until everything is up and then launch one of these:"
+echo "$ curl http://$GATEWAY_IP:$EXT_PORT/"
+echo "$ ab -k -c 350 -n 20000 http://$GATEWAY_IP:$EXT_PORT/"
+
