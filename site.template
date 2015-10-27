@@ -1,6 +1,8 @@
 
 lua_package_path   "@@LUA_LIBRARY@@/?.lua;;";
-lua_shared_dict    lb 10m;
+
+lua_shared_dict    lb       10m;
+lua_shared_dict    lb_locks  1m;
 
 init_by_lua '
 ';
