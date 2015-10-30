@@ -38,7 +38,7 @@ RUN ln -sf /dev/stdout /usr/local/openresty/nginx/logs/access.log && \
     ln -sf /dev/stderr /usr/local/openresty/nginx/logs/error.log
 
 ADD nginx.conf                /usr/local/openresty/nginx/conf/
-ADD wrapper.sh site.template  /home/weave/
+ADD wrapper.sh service.template  /home/weave/
 ADD lua                       /home/weave/lua
 
 VOLUME ["/var/cache/nginx"]
