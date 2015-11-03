@@ -1,10 +1,13 @@
 
-lua_package_path   "@@LUA_LIBRARY@@/?.lua;;";
+lua_package_path            "@@LUA_LIBRARY@@/?.lua;;";
+lua_shared_dict             lb  10m;
+lua_socket_log_errors       on;
+lua_check_client_abort      on;
 
-lua_shared_dict    lb       10m;
-lua_shared_dict    lb_locks  1m;
 
-init_by_lua '
+init_worker_by_lua '
+    local weave = require "weave"
+    weave:watch_name("@@NAME@@", "ws://@@NAMESERVER@@:6784/name/ws")
 ';
 
 server {
@@ -17,13 +20,15 @@ server {
     location / {
             set $_url                   "";
             set $upstream               "";
-            set $name                   "@@NAME@@";
-            set $nameserver             "@@NAMESERVER@@";
-            set $int_port               @@INT_PORT@@;
-            set $ttl                    1;
 
             lua_need_request_body       on;
-            access_by_lua_file          @@LUA_LIBRARY@@/access.lua;
+            access_by_lua '
+                local weave = require "weave"
+                local upstream, err = weave:random_upstream("@@NAME@@")
+                if not err then
+                    ngx.var.upstream = "http://" .. upstream .. ":" .. @@INT_PORT@@
+                end
+            ';
 
             proxy_buffering             off;
             proxy_set_header            Host $host;

@@ -20,8 +20,12 @@ ALL_MACHINE_COUNT=$(echo $ALL_MACHINES | wc -w)
 DISCO_TOKEN_URL=https://discovery-stage.hub.docker.com/v1/clusters
 DISCO_SCRIPT_URL=https://raw.githubusercontent.com/weaveworks/discovery/master/discovery
 
+WEAVE_SCRIPT=$GOPATH/src/github.com/weaveworks/weave/weave
 NGINX_IMAGE="inercia/weave-nginx"
 NGINX_IMAGE_FILES="../weave_nginx.tar"
+ALL_IMAGE_FILES="$NGINX_IMAGE_FILES \
+                 $GOPATH/src/github.com/weaveworks/weave/weave.tar \
+                 $GOPATH/src/github.com/weaveworks/discovery/weavediscovery.tar"
 REMOTE_ROOT=/home/docker
 WEAVE=$REMOTE_ROOT/weave
 WEAVER_PORT=6783
@@ -77,11 +81,14 @@ done
 log "Building..."
 make -C ..
 
-log "Uploading $NGINX_IMAGE image"
-for machine in $NGINX_MACHINES ; do
-    for file in $NGINX_IMAGE_FILES ; do
-        log "... uploading to $machine"
-        docker-machine scp $file $machine:$REMOTE_ROOT/ >/dev/null
+log "Uploading images"
+for machine in $ALL_MACHINES ; do
+    log "... uploading Weave script to $machine"
+    docker-machine scp $WEAVE_SCRIPT $machine:$REMOTE_ROOT/ >/dev/null
+    
+    for image in $ALL_IMAGE_FILES ; do
+        log "... uploading $image to $machine"
+        docker-machine scp $image $machine:$REMOTE_ROOT/image-$(basename $image) >/dev/null
     done
 done
 
@@ -98,12 +105,15 @@ for machine in $ALL_MACHINES ; do
             docker rm \$C    >/dev/null 2>&1 || /bin/true
         done
 
+        for image in $REMOTE_ROOT/image-*.tar ; do
+            echo ">>> Loading image \$image"
+            docker load -i \$image
+        done
+
         echo ">>> Installing and launching Weave"
         cd $REMOTE_ROOT                         && \
-            rm -f $WEAVE                        && \
-            sudo curl -L git.io/weave -o $WEAVE && \
             sudo chmod a+x $WEAVE               && \
-            $WEAVE launch --init-peer-count $ALL_MACHINE_COUNT
+            $WEAVE launch --init-peer-count $ALL_MACHINE_COUNT --log-level=debug
 
         sleep 3
 
@@ -115,15 +125,10 @@ for machine in $ALL_MACHINES ; do
 
         if [ "\$1" = "webserver" ] ; then
             echo ">>> Launching webserver"
-            $WEAVE run -p $INT_PORT:$INT_PORT -ti \
-                --name $SERVICE adejonge/helloworld &
+            $WEAVE run -p $INT_PORT:$INT_PORT -ti --name $SERVICE adejonge/helloworld &
         else
-            echo ">>> Loading weave/nginx"
-            docker load -i $REMOTE_ROOT/weave_nginx.tar
-
             echo ">>> Launching weave/nginx"
-            $WEAVE run -p $EXT_PORT:$EXT_PORT \
-                --name nginx $NGINX_IMAGE $EXT_PORT:$SERVICE:$INT_PORT   &
+            $WEAVE run -p $EXT_PORT:$EXT_PORT --name nginx $NGINX_IMAGE $EXT_PORT:$SERVICE:$INT_PORT   &
         fi
 EOF
     
