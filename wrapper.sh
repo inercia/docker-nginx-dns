@@ -7,7 +7,7 @@ NAME="weave-nginx"
 NGINX=/usr/local/openresty/nginx/sbin/nginx
 
 # the service template and wehere it will be written to
-NGINX_SERVICE_TEMPLATE=${NGINX_SERVICE_TEMPLATE:-$CURR_DIR/site.template}
+NGINX_SERVICE_TEMPLATE=${NGINX_SERVICE_TEMPLATE:-$CURR_DIR/service.template}
 NGINX_SERVICES_DIR=${NGINX_SERVICES_DIR:-/usr/local/openresty/nginx/conf/sites-enabled}
 
 # where our Lua scripts are

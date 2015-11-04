@@ -17,7 +17,7 @@ WEAVE_NGINX_EXPORT=weave_nginx.tar
 
 all:    $(WEAVE_NGINX_EXPORT)
 
-$(WEAVE_NGINX_UPTODATE): Dockerfile nginx.conf site.template wrapper.sh lua/access.lua
+$(WEAVE_NGINX_UPTODATE): Dockerfile nginx.conf service.template wrapper.sh lua/weave.lua
 	$(SUDO) docker build -t $(WEAVE_NGINX_IMAGE) .
 	touch $@
 
