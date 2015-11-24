@@ -24,8 +24,6 @@ function random_upstream(num_upstreams)
     return upstream
 end
 
--- TODO: maybe we could connect to weaveDNS and wait for updates on the name...
-
 -- hackish solution for storing the 'name':IP1,IP2...IPn
 -- in the shared memory area: we store
 --    'name#records' = n

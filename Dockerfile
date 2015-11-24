@@ -37,11 +37,11 @@ RUN apt-get update && \
 RUN ln -sf /dev/stdout /usr/local/openresty/nginx/logs/access.log && \
     ln -sf /dev/stderr /usr/local/openresty/nginx/logs/error.log
 
-ADD nginx.conf                /usr/local/openresty/nginx/conf/
-ADD wrapper.sh service.template  /home/weave/
-ADD lua                       /home/weave/lua
+ADD nginx.conf                   /usr/local/openresty/nginx/conf/
+ADD wrapper.sh service.template  /home/nginx/
+ADD lua                          /home/nginx/lua
 
 VOLUME ["/var/cache/nginx"]
 
-ENTRYPOINT ["/home/weave/wrapper.sh"]
+ENTRYPOINT ["/home/nginx/wrapper.sh"]
 
